@@ -75,6 +75,31 @@ class BuildingBase(BaseModel):
     hvac_year_updated: Optional[int] = None     # Made Optional
     entity_id: Optional[int] = None             # Made Optional
 
+class BuildingUpdate(BaseModel):
+    """Pydantic model to validate incoming building update data"""
+    mortgagee_id: Optional[int] = None        
+    address_normalized: Optional[str] = None    
+    bld_number: Optional[int] = None            
+    owner_occupied: Optional[bool] = None       
+    street_address: Optional[str] = None        
+    city: Optional[str] = None                  
+    state: Optional[str] = None                 
+    zip_code: Optional[str] = None              
+    county: Optional[str] = None                
+    units: Optional[int] = None                 
+    construction_code: Optional[int] = None     
+    year_built: Optional[int] = None            
+    stories: Optional[int] = None              
+    square_feet: Optional[int] = None           
+    desired_building_coverage: Optional[float] = None  
+    fire_alarm: Optional[bool] = None           
+    sprinkler_system: Optional[bool] = None    
+    roof_year_updated: Optional[int] = None      
+    plumbing_year_updated: Optional[int] = None  
+    electrical_year_updated: Optional[int] = None 
+    hvac_year_updated: Optional[int] = None       
+    entity_id: Optional[int] = None               
+
 # Model for creating a new building
 class BuildingCreate(BuildingBase):
     pass
@@ -143,4 +168,20 @@ def read_building(building_id: int, db: Session = Depends(get_db)):
     building = db.query(Building).filter(Building.building_id == building_id).first()
     if not building:
         raise HTTPException(status_code=404, detail="Building not found")
+    return building
+
+@app.put("/buildings/{building_id}")
+def update_building(building_id: int, building_data: BuildingUpdate, db: Session = Depends(get_db)):
+    building = db.query(Building).filter(Building.building_id == building_id).first()
+    if not building:
+        raise HTTPException(status_code=404, detail="Building not found")
+
+    # Update the fields conditionally
+    for key, value in building_data.dict(exclude_unset=True).items():
+        # Only update if value is not None (or not blank if you implement such a check)
+        if value is not None:  # Check the value before updating
+            setattr(building, key, value)
+
+    db.commit()
+    db.refresh(building)
     return building
