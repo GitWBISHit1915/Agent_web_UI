@@ -1,0 +1,75 @@
+﻿#Paths for model:
+
+C:\Projects\Agent_web_UI\main.py
+C:\Projects\DATABASESCRIPT.sql
+C:\Projects\Agent_web_UI\models\building_model.py
+C:\Projects\Agent_web_UI\models\entity_model.py
+C:\Projects\Agent_web_UI\schemas\building_schema.py
+C:\Projects\Agent_web_UI\schemas\entity_schema.py
+C:\Projects\Agent_web_UI\models\__init__.py
+C:\Projects\Agent_web_UI\schemas\__init__.py
+
+uvicorn main:app --reload --port 8001
+
+## Entity stuff for Main.py
+
+@app.post("/entities/", response_model=Entity)
+def create_entity(entity: EntityCreate, db: Session = Depends(get_db)):
+    db_entity = Entity(**entity.dict())
+    db.add(db_entity)
+    db.commit()
+    db.refresh(db_entity)
+    return db_entity
+
+@app.get("/entities/{entity_id}", response_model=Entity)
+def read_entity(entity_id: int, db: Session = Depends(get_db)):
+    entity = db.query(Entity).filter(Entity.id == entity_id).first()
+    if entity is None:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    return entity
+
+@app.put("/entities/{entity_id}", response_model=Entity)
+def update_entity(entity_id: int, entity: EntityUpdate, db: Session = Depends(get_db)):
+    db_entity = db.query(Entity).filter(Entity.id == entity_id).first()
+    if db_entity is None:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    for key, value in entity.dict(exclude_unset=True).items():
+        setattr(db_entity, key, value)
+    db.commit()
+    return db_entity
+
+@app.delete("/entities/{entity_id}", response_model=Entity)
+def delete_entity(entity_id: int, db: Session = Depends(get_db)):
+    db_entity = db.query(Entity).filter(Entity.id == entity_id).first()
+    if db_entity is None:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    db.delete(db_entity)
+    db.commit()
+    return db_entity
+
+
+
+
+# Successful 200 test on POST/buildings/Create Building
+{
+  "address_normalized": "123 Wow Street, Charleston, WV 25302",
+  "bld_number": 1,
+  "owner_occupied": false,
+  "street_address": "123 Wow Street",
+  "city": "Charleston",
+  "state": "WV",
+  "zip_code": "25302",
+  "county": "kanawha",
+  "units": 5,
+  "construction_code": 2,
+  "year_built": 1935,
+  "stories": 2,
+  "square_feet": 4500,
+  "desired_building_coverage": 300000,
+  "fire_alarm": false,
+  "sprinkler_system": true,
+  "roof_year_updated": 2020,
+  "plumbing_year_updated": 2020,
+  "electrical_year_updated": 2020,
+  "hvac_year_updated": 2020,
+}
