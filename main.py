@@ -13,12 +13,11 @@ from models.clientcontact_model import ClientContact
 from schemas.clientcontact_schema import ClientContactBase, ClientContactCreate, ClientContactInDB, ClientContactUpdate
 import httpx
 
-DATABASE_URL = 'mssql+pyodbc://wbis_api:a7#J!q9P%bZt$r2d@JOHN\\SQLEXPRESS01/wbis_core?driver=ODBC+Driver+17+for+SQL+Server'
+#DATABASE_URL =
 
-AIRTABLE_BASE_ID = "appK6lkMaeCNpBAiY"
-AIRTABLE_API_KEY = "patWCppXtHNjVDsFR.5490c1dfa5f1d80e1c8930927cee60b5b16063a50df7d2b30c6ac6394eb09dca"
-AIRTABLE_API_URL = f'https://api.airtable.com/v0/appK6lkMaeCNpBAiY/'
-
+#stuff
+#stuff
+#stuff
 
 def get_airtable_url(table_name: str) -> str:
     return f'{AIRTABLE_API_URL}{table_name}'
