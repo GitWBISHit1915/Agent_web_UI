@@ -4,12 +4,35 @@ from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.declarative import declarative_base
 from pydantic import BaseModel  
 from typing import Optional
-from models.building_model import Building #, BuildingCreate, BuildingUpdate
+from controllers.clientcontact_controller import delete_client_contact
+from models.building_model import Building
 from schemas.building_schema import BuildingCreate, BuildingUpdate, BuildingInDB
 from models.entity_model import Entity
 from schemas.entity_schema import EntityCreate, EntityUpdate, EntityInDB
+from models.clientcontact_model import ClientContact
+from schemas.clientcontact_schema import ClientContactBase, ClientContactCreate, ClientContactInDB, ClientContactUpdate
+import httpx
 
 DATABASE_URL = 'mssql+pyodbc://wbis_api:a7#J!q9P%bZt$r2d@JOHN\\SQLEXPRESS01/wbis_core?driver=ODBC+Driver+17+for+SQL+Server'
+
+AIRTABLE_BASE_ID = "appK6lkMaeCNpBAiY"
+AIRTABLE_API_KEY = "patWCppXtHNjVDsFR.5490c1dfa5f1d80e1c8930927cee60b5b16063a50df7d2b30c6ac6394eb09dca"
+AIRTABLE_API_URL = f'https://api.airtable.com/v0/appK6lkMaeCNpBAiY/'
+
+
+def get_airtable_url(table_name: str) -> str:
+    return f'{AIRTABLE_API_URL}{table_name}'
+
+buildings_url = get_airtable_url('airtable_Building')
+#entites_url = get_airtable_url('airtable_Entity')
+#enter other urls here as we go. ('airtable name')
+#....
+#....
+
+print(buildings_url)
+#print(entity_url)
+#....
+#....
 
 engine = create_engine(DATABASE_URL)
 
@@ -98,3 +121,39 @@ def delete_entity(entity_id: int, db: Session = Depends(get_db)):
     db.delete(db_entity)
     db.commit()
     return db_entity
+
+@app.post("/clientcontacts/", response_model=ClientContactInDB)
+def create_client_contact(client_contact: ClientContactCreate, db: Session = Depends(get_db)):
+    db_client_contact = ClientContact(**client_contact.dict())
+    db.add(db_client_contact)
+    db.commit()
+    db.refresh(db_client_contact)
+    return db_client_contact
+
+@app.get("/clientcontacts/{client_contact_id}", response_model=ClientContactInDB)
+def read_client_contact (client_contact_id: int, db: Session = Depends(get_db)):
+    db_client_contact = db.query(ClientContact).filter(ClientContact.client_contact_id == client_contact_id).first()
+    if db_client_contact is None:
+        raise HTTPException(status_code=404, detail="ClientContact not found")
+    return db_client_contact
+
+@app.put("/clientcontacts/{client_contact_id}", response_model=ClientContactInDB)
+def update_client_contact(client_contact_id: int, client_contact: ClientContactUpdate, db: Session = Depends(get_db)):
+    db_client_contact = db.query(ClientContact).filter(ClientContact.client_contact_id == client_contact_id).first()
+    if db_client_contact is None:
+        raise HTTPException(status_code=404, detail="ClientContact not found")
+    for key, value in client_contact.dict(exclude_unset=True).items():
+        setattr(db_client_contact, key, value)
+    db.commit()
+    return db_client_contact
+
+@app.delete("/clientcontacts/{client_contact_id}", response_model=ClientContactInDB)
+def delete_client_contact(client_contact_id: int, db: Session = Depends(get_db)):
+    db_client_contact = db.query(ClientContact).filter(ClientContact.client_contact_id == client_contact_id).first()
+    if db_client_contact is None:
+        raise HTTPException(status_code=404, detail="ClientContact not found")
+    db.delete(db_client_contact)
+    db.commit()
+    return db_client_contact
+
+

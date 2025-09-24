@@ -1,4 +1,5 @@
-﻿GENERAL INSTRUCTIONS DO THIS FOR EVERY PROMPT GET
+﻿THESE INSTRUCTIONS SERVE AS CONTEXT FOR THE BACKEND APPLICATION SQL SSMS DB + FASTAPI. USE THIS FOR CONTEXT TO WHAT WE ARE BUILDING OUR FRONT END ONTO
+GENERAL INSTRUCTIONS DO THIS FOR EVERY PROMPT GET
     1.) Only do one code block at a time
     2.) Only do one step at a time
     3.) Currently skip working with migration folder elements if not necessary
@@ -26,32 +27,6 @@
     10.) Always confirm with me before making any changes to the development workflow or processes
     11.) When suggesting code changes, always show me exactly where to add, delete, or modify in my scripts. If my script 
         is attached. The just show me what needs change and where. 
-
-Main.py INSTRUCTIONS FOR OPENAI
-
-    from fastapi import FastAPI, Depends, HTTPException
-    from sqlalchemy.orm import Session
-    from models.building_model import Building, BuildingCreate, BuildingUpdate
-    from models.entity_model import Entity, EntityCreate, EntityUpdate
-
-    app = FastAPI()
-
-    # Add CORS middleware if necessary
-    # ... this will be either a custom browser window we make or airtable
-
-    # Database dependency
-    def get_db():
-        # Your database session management here
-        pass
-
-    # CRUD operations for Building
-    # ...CHECK and make sure its correct with the changes we have made
-
-    # CRUD operations for Entity
-    # ...
-
-    # More routes and logic as necessary
-
 
 Working toward GOAL directory
 CURRENT INTERPERTATION INSTRUCTIONS: Only build for objects related to building and entity database objects for now while we test with swagger UI/uvicorn API.
@@ -120,5 +95,17 @@ CURRENT INTERPERTATION INSTRUCTIONS: Only build for objects related to building 
                 ├── __init__.py
                 ├── DATABASESCRIPT.sql  # Your SQL scripts
 
+!START FRONT END USER INTERFACE INSTRUCTIONS HERE!
 
+Use these instructions for the User Interface:
+This must be scalable, not just for test development.
+This must be such that my SSMS wbis_core database is the System of Record on my server instance. JOHN\SQLEXPRESS01
+I want to work on building an user interface.
+What I really need is a UI where I can pull all this data we made pull through to swagger UI, to a day to day userinterface that my employees and myself can use to update the database as a CRM. 
+I do insurance for investment properties for most of our daily activities are effectively updating and adding to a database. 
+What I really want is tables that pull all the tables as customizable fields in tables very similar to airtable but I only want to features I want to build into it. 
+I was thinking in a similar was I built the very files that made this custom chatUI I made I am talking to you with I think would work. 
+I had you make me a custom html file to make the window I am typing in. 
+Im thinking making something webased like that is the way to go.
 
+Language of Choice: React

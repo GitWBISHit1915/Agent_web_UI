@@ -47,3 +47,4 @@ Clear-Content -Path $outputFile
 Write-DirectoryTree -path $rootDirectory
 
 Write-Host "Directory tree has been written to $outputFile"
+Read-Host -Prompt "Press Enter  to exit"
