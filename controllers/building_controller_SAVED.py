@@ -1,6 +1,5 @@
 ﻿from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from main import sync_buildings_to_airtable
 from models.building_model import Building  # Specify the model path for clarity
 from schemas.building_schema import BuildingCreate, BuildingUpdate, BuildingInDB  # Specify schema path for clarity
 from database import get_db  # Keep as is
@@ -40,7 +39,3 @@ def delete_building(building_id: int, db: Session = Depends(get_db)):
     db.delete(db_building)
     db.commit()
     return {"detail": "Building deleted"}
-
-@router.post("/sync_buildings")
-async def sync_buildings(db: Session = Depends(get_db)):
-    sync_buildings_to_airtable(db)
