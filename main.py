@@ -57,6 +57,21 @@ def get_db():
     finally:
         db.close()
 
+#function find_airtable_record_id below needs tested - one succesful test on 09/24/2025 changing buildin_id=18 year built 1954 to 1964 (pt 1)
+
+def find_airtable_record_id(building:Building) -> Optional[str]:
+    """Searches Airtable for a cord that matches the given building and returns its record ID."""
+    response = httpx.get(
+        f"{AIRTABLE_API_URL}airtable_Building",
+        headers={"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
+    )
+    if response.status_code == 200:
+        records = response.json().get('records', [])
+        for record in records:
+            if (record['fields'].get('Address Normalized') == building.address_normalized and 
+                    record['fields'].get('bld_number') == building.bld_number):
+                return record['id']
+    return None
 
 @app.post("/sync_buildings_to_airtable/")
 def sync_buildings_to_airtable(db: Session = Depends(get_db)):
@@ -92,11 +107,22 @@ def sync_buildings_to_airtable(db: Session = Depends(get_db)):
             
         }
         #print(f"Syncing Building ID {building.building_id} with payload: {building_payload}")
-        response = httpx.post(
-            f"{AIRTABLE_API_URL}airtable_BUilding",
-            headers={"Authorization": f"Bearer {AIRTABLE_API_KEY}", "Content-Type": "application/json"},
-            json=building_payload
-        )
+        existing_record_id = find_airtable_record_id(building)
+        #code block below needs tested - one succesful test on 09/24/2025 changing buildin_id=18 year built 1954 to 1964 (pt 2)
+
+        if existing_record_id:
+            response = httpx.patch(
+                f"{AIRTABLE_API_URL}airtable_BUilding/{existing_record_id}",
+                headers={"Authorization": f"Bearer {AIRTABLE_API_KEY}", "Content-Type": "application/json"},
+                json=building_payload
+            )
+        else:
+            response = httpx.post(
+                f"{AIRTABLE_API_URL}airtable_building",
+                headers={"Authorization": f"Bearer{AIRTABLE_API_KEY}","Content-Type": "application/json"},
+                json=building_payload
+            )
+
         print(response.text)
         if response.status_code != 200:
             print(f"Failed to sync building ID {building.building_id}: {response.json()}")
