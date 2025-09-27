@@ -1,11 +1,12 @@
-﻿from logging import PlaceHolder
-from fastapi import Body, FastAPI, Depends, HTTPException
+﻿from dataclasses import MISSING
+from logging import PlaceHolder
+from fastapi import Body, FastAPI, Depends, HTTPException, Header
 from sqlalchemy import create_engine, Column, Integer, String, DECIMAL
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.declarative import declarative_base
 from pydantic import BaseModel  
 import pyodbc
-from typing import Optional
+from typing import Optional, Required
 from controllers.clientcontact_controller import Router, delete_client_contact
 from models.building_model import Building
 from schemas.building_schema import BuildingCreate, BuildingUpdate, BuildingInDB
@@ -17,7 +18,25 @@ import httpx
 from shutil import get_terminal_size
 COLS = get_terminal_size(fallback=(80,24)).columns
 
+DATABASE_URL = 'mssql+pyodbc://wbis_api:a7#J!q9P%bZt$r2d@JOHN\\SQLEXPRESS01/wbis_core?driver=ODBC+Driver+17+for+SQL+Server'
+
+
+AIRTABLE_BASE_ID="appK6lkMaeCNpBAiY"
+AIRTABLE_API_KEY="patWCppXtHNjVDsFR.5490c1dfa5f1d80e1c8930927cee60b5b16063a50df7d2b30c6ac6394eb09dca"
+AIRTABLE_TABLE_ID="tbllK1Negu5zcxHXN"
+
+AIRTABLE_API_URL="https://api.airtable.com/v0/appK6lkMaeCNpBAiY/"
+
 #insert env
+
+REQUIRED_BUILDING_FIELDS = [
+    "bld_number", "owner_occupied",
+    "street_address", "city", "state", "zip_code", "county",
+    "construction_code", "fire_alarm", "sprinkler_system",
+]
+
+def _is_blank(v):
+    return v is None or (isinstance(v, str) and v.strip() == "")
 
 def get_airtable_url(table_name: str) -> str:
     return f'{AIRTABLE_API_URL}{table_name}'
@@ -54,6 +73,15 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def normalize_address(street: str, city: str, state: str, zip_code: str) -> str:
+    to_s = lambda x: str(x or "").strip()
+    s = lambda x: to_s(x)
+    z_raw = to_s(zip_code)
+    z = z_raw[:5]
+    parts = [s(street), s(city), s(state)]
+    core = ", ".join(p for p in parts if p)
+    return (core + (f" {z}" if z else "")).strip()
 
 def find_airtable_record_id(building:Building) -> Optional[str]:
     """Searches Airtable for a cord that matches the given building and returns its record ID."""
@@ -119,6 +147,18 @@ def ingest_building(payload: dict = Body(...)): # "C" in Crud (From Aitable Pers
         norm[snake] = v
 
     fields = norm
+
+    missing = [k for k in REQUIRED_BUILDING_FIELDS if _is_blank(fields.get(k))]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Missing required: {', '.join(missing)}")
+
+    if not fields.get("address_normalized") or (isinstance(fields.get("address_normalized"), str) and fields["address_normalized"].strip() == ""):
+        fields["address_normalized"] = normalize_address(
+            fields.get("street_address") or fields.get("Street Address"),
+            fields.get("city"),
+            fields.get("state"),
+            fields.get("zip_code") or fields.get("Zip"),
+        )
 
     addr = fields.get("address_normalized") or fields.get("Address Normalized")
     bldn = fields.get("bld_number") or fields.get("Bld#") or 1
@@ -193,7 +233,11 @@ def ingest_building(payload: dict = Body(...)): # "C" in Crud (From Aitable Pers
             r = cur.fetchone()
             new_id = int(r[0]) if r else None
         conn.commit()
-        return {"status": "ok", "building_id": new_id}
+        return {
+            "status": "ok", 
+            "building_id": new_id,
+            "address_normalized": fields["address_normalized"],
+        }
     
     except pyodbc.Error as e:
 
@@ -206,7 +250,11 @@ def ingest_building(payload: dict = Body(...)): # "C" in Crud (From Aitable Pers
             r = cur.fetchone()
             new_id = int(r[0]) if r else None
             conn.commit()
-            return {"status": "ok", "building_id": new_id}
+            return {
+                "status": "ok", 
+                "building_id": new_id,
+                "address_normalized": fields["address_normalized"],
+            }
             
         raise HTTPException(status_code=500, detail=f"DB error: {msg}")
     finally:
@@ -366,6 +414,89 @@ def update_building(building_id: int, building: BuildingUpdate, db: Session = De
         setattr(db_building, key, value)
     db.commit()
     return db_building
+
+@app.post("/airtable/buildings/update")
+def update_building_from_airtable(payload: dict = Body(...)):
+    """
+    Minimal, column-selective UPDATE for dbo.Building.
+    Accepts:
+      - { "fields": { ... } }
+      - { "records": [ { "fields": { ... } } ] }
+      - raw fields object
+    Requires: building_id in the payload.
+    """
+    fields = payload.get("fields")
+    if fields is None and isinstance(payload.get("records"), list) and payload["records"]:
+        fields = payload["records"][0].get("fields", {})
+    if fields is None:
+        fields = payload
+
+    norm = {}
+    for k, v in (fields or {}).items():
+        kk = (k or "").strip()
+        if kk == "Bld#": norm["bld_number"] = v; continue
+        if kk == "Zip": norm["zip_code"] = v; continue
+        norm[kk.lower().replace(" ", "_")] =v
+    fields = norm
+
+    bld_id = fields.get("building_id")
+    if bld_id in (None, ""):
+        raise HTTPException(status_code=400, detail="building_id is required for updates")
+
+    colmap = {
+        "mortgagee_id": "mortgagee_id",
+        "address_normalized": "Address Normalized",
+        "bld_number": "Bld#",
+        "owner_occupied": "Owner Occupied",
+        "street_address": "Street Address",
+        "city": "City",
+        "state": "State",
+        "zip_code": "Zip",
+        "county": "County",
+        "units": "Units",
+        "construction_code": "construction_code",
+        "year_built": "Year Built",
+        "stories": "Stories",
+        "square_feet": "Square Feet",
+        "desired_building_coverage": "Desired Building Coverage",
+        "fire_alarm": "Fire Alarm",
+        "sprinkler_system": "Sprinkler System",
+        "roof_year_updated": "roof_year_updated",
+        "plumbing_year_updated": "plumbing_year_updated",
+        "electrical_year_updated": "electrical_year_updated",
+        "hvac_year_updated": "hvac_year_updated",
+        "entity_id": "entity_id",
+}
+
+    set_cols, set_vals = [], []
+    for api_key, sql_col in colmap.items():
+        if api_key in fields:
+            val = fields[api_key]
+            if api_key in ("owner_occupied", "fire_alarm", "sprinkler_system") and val is not None:
+                val = int(bool(val))
+            set_cols.append(f"[{sql_col}] = ?")
+            set_vals.append(val)
+
+    if not set_cols:
+        return {"status": "ok", "updated": 0, "building_id": int(bld_id)}
+
+    sql = "UPDATE dbo.Building SET " + ", ".join(set_cols) + " WHERE building_id = ?"
+    set_vals.append(int(bld_id))
+
+    try:
+        conn = pyodbc.connect(CONN_STR)
+        cur = conn.cursor()
+        cur.execute(sql, set_vals)
+        rows = cur.rowcount
+        conn.commit()
+        return {"status": "ok", "updated": rows, "building_id": int(bld_id)}
+    except pyodbc.Error as e:
+        raise HTTPException(status_code=500, detail=f"DB error: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 @app.delete("/buildings/{building_id}", response_model=BuildingInDB)
 def delete_building(building_id: int, db: Session = Depends(get_db)):
