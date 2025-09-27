@@ -1,8 +1,10 @@
-﻿from fastapi import FastAPI, Depends, HTTPException
+﻿from logging import PlaceHolder
+from fastapi import Body, FastAPI, Depends, HTTPException
 from sqlalchemy import create_engine, Column, Integer, String, DECIMAL
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.declarative import declarative_base
 from pydantic import BaseModel  
+import pyodbc
 from typing import Optional
 from controllers.clientcontact_controller import Router, delete_client_contact
 from models.building_model import Building
@@ -12,15 +14,10 @@ from schemas.entity_schema import EntityCreate, EntityUpdate, EntityInDB
 from models.clientcontact_model import ClientContact
 from schemas.clientcontact_schema import ClientContactBase, ClientContactCreate, ClientContactInDB, ClientContactUpdate
 import httpx
+from shutil import get_terminal_size
+COLS = get_terminal_size(fallback=(80,24)).columns
 
-DATABASE_URL = 'mssql+pyodbc://wbis_api:a7#J!q9P%bZt$r2d@JOHN\\SQLEXPRESS01/wbis_core?driver=ODBC+Driver+17+for+SQL+Server'
-
-
-AIRTABLE_BASE_ID="appK6lkMaeCNpBAiY"
-AIRTABLE_API_KEY="patWCppXtHNjVDsFR.5490c1dfa5f1d80e1c8930927cee60b5b16063a50df7d2b30c6ac6394eb09dca"
-AIRTABLE_TABLE_ID="tbllK1Negu5zcxHXN"
-
-AIRTABLE_API_URL="https://api.airtable.com/v0/appK6lkMaeCNpBAiY/"
+#insert env
 
 def get_airtable_url(table_name: str) -> str:
     return f'{AIRTABLE_API_URL}{table_name}'
@@ -49,6 +46,7 @@ app = FastAPI()
 
 Base.metadata.create_all(bind=engine)
 
+CONN_STR = "DSN=wbis_core_dsn;Trusted_Connection=Yes;"
 
 def get_db():
     db = SessionLocal()
@@ -57,8 +55,167 @@ def get_db():
     finally:
         db.close()
 
+def find_airtable_record_id(building:Building) -> Optional[str]:
+    """Searches Airtable for a cord that matches the given building and returns its record ID."""
+    response = httpx.get(
+        f"{AIRTABLE_API_URL}airtable_Building",
+        headers={"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
+    )
+    if response.status_code == 200:
+        records = response.json().get('records', [])
+        for record in records:
+            if (record['fields'].get('Address Normalized') == building.address_normalized and 
+                    record['fields'].get('bld_number') == building.bld_number):
+                return record['id']
+    return None
 
-@app.post("/sync_buildings_to_airtable/")
+@app.post("/airtable/buildings/ingest")
+def ingest_building(payload: dict = Body(...)): # "C" in Crud (From Aitable Perspective)
+    """
+    Accepts Airtable-like payload:
+    either { "fields": { ... } }  OR  the fields dict directly.
+    Inserts a new row into dbo.Building. Minimal logic; no ORM.
+    """
+    fields = payload.get("fields", payload)
+    if fields is None and isinstance(payload.get("records"), list) and payload["records"]:
+        fields = payload["records"][0].get("fields", {})
+    if fields is None:
+        fields = payload
+
+    # Accept Airtable names with spaces and map to our snake_case keys
+    aliases = {
+        "Address Normalized": "address_normalized",
+        "Bld#": "bld_number",
+        "Owner Occupied": "owner_occupied",
+        "Street Address": "street_address",
+        "Zip": "zip_code",
+        "Square Feet": "square_feet",
+        "Year Built": "year_built",
+        "Desired Building Coverage": "desired_building_coverage",
+        "Fire Alarm": "fire_alarm",
+        "Sprinkler System": "sprinkler_system",
+        "City": "city",
+        "State": "state",
+        "County": "county",
+        "Units": "units",
+        "Stories": "stories",
+    }
+    for old, new in aliases.items():
+        if old in fields and new not in fields:
+            fields[new] = fields[old]
+    
+    norm = {}
+    for k, v in fields.items():
+        kk = k.strip()
+        snake = kk.lower().replace(" ", "_")
+
+        if kk == "Bld#":
+            norm["bld_number"] = v
+            continue
+        if kk == "Zip":
+            norm["zip_code"] = v
+            continue
+
+        norm[snake] = v
+
+    fields = norm
+
+    addr = fields.get("address_normalized") or fields.get("Address Normalized")
+    bldn = fields.get("bld_number") or fields.get("Bld#") or 1
+    
+    print("DEBUG keys in fields:", list(fields.keys()))
+    if not fields.get("address_normalized"):
+        raise HTTPException(status_code=400, detail="address_normalized is required")
+    if fields.get("construction_code") is None:
+        raise HTTPException(status_code=400, detail="construction_code is  required")
+
+    colmap = {
+            "mortgagee_id": "mortgagee_id",
+            "address_normalized": "Address Normalized",
+            "bld_number": "Bld#",
+            "owner_occupied": "Owner Occupied",
+            "street_address": "Street Address",
+            "city": "City",
+            "state": "State",
+            "zip_code": "Zip",
+            "county": "County",
+            "units": "Units",
+            "construction_code": "construction_code",
+            "year_built": "Year Built",
+            "stories": "Stories",
+            "square_feet": "Square Feet",
+            "desired_building_coverage": "Desired Building Coverage",
+            "fire_alarm": "Fire Alarm",
+            "sprinkler_system": "Sprinkler System",
+            "roof_year_updated": "roof_year_updated",
+            "plumbing_year_updated": "plumbing_year_updated",
+            "electrical_year_updated": "electrical_year_updated",
+            "hvac_year_updated": "hvac_year_updated",
+            "entity_id": "entity_id",
+  
+        }
+
+    cols = []
+    vals = []
+    for api_key, sql_col in colmap.items():
+        if api_key in fields:
+            val = fields[api_key]
+
+            if api_key in ("owner_occupied", "fire_alarm", "sprinkler_system") and val is not None:
+                val = int(bool(val))
+            cols.append(sql_col)
+            vals.append(val)
+
+    if "Address Normalized" not in cols:
+        raise HTTPException(status_code=400, detail="address_normalized is required")
+    if "construction_code" not in cols:
+        raise HTTPException(status_code=400, detail="construction_code is required")
+
+    placeholders = ", ".join(["?"] * len(cols))
+    collist = ", ".join(f"[{c}]" for c in cols)  
+
+    insert_sql = f"INSERT INTO dbo.Building ({collist}) VALUES ({placeholders});"
+    scope_sql = "SELECT CAST(SCOPE_IDENTITY() AS INT);"
+
+    try:
+        conn = pyodbc.connect(CONN_STR)
+        cur = conn.cursor()
+        cur.execute(insert_sql, vals)
+        cur.execute("SELECT CAST(SCOPE_IDENTITY() AS INT);")
+        row = cur.fetchone()
+        new_id = int(row[0]) if row and row[0] is not None else None
+
+        if new_id is None:
+            cur.execute(
+                "SELECT building_id FROM dbo.building WHERE [Address Normalized] = ? AND [Bld#] = ?",
+                (addr, bldn),
+            )
+            r = cur.fetchone()
+            new_id = int(r[0]) if r else None
+        conn.commit()
+        return {"status": "ok", "building_id": new_id}
+    
+    except pyodbc.Error as e:
+
+        msg = str(e)
+        if "2627" in msg or "2601" in msg:
+            cur.execute(
+                "SELECT building_id FROM dbo.Building WHERE [Address Normalized] = ? AND [Bld#] = ?",
+                (addr, bldn),
+            )
+            r = cur.fetchone()
+            new_id = int(r[0]) if r else None
+            conn.commit()
+            return {"status": "ok", "building_id": new_id}
+            
+        raise HTTPException(status_code=500, detail=f"DB error: {msg}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+@app.post("/sync_buildings_to_airtable/") # Syncs all records in SQL DB to Airtable
 def sync_buildings_to_airtable(db: Session = Depends(get_db)):
     buildings = db.query(Building).all()
     for building in buildings:
@@ -92,11 +249,22 @@ def sync_buildings_to_airtable(db: Session = Depends(get_db)):
             
         }
         #print(f"Syncing Building ID {building.building_id} with payload: {building_payload}")
-        response = httpx.post(
-            f"{AIRTABLE_API_URL}airtable_BUilding",
-            headers={"Authorization": f"Bearer {AIRTABLE_API_KEY}", "Content-Type": "application/json"},
-            json=building_payload
-        )
+        existing_record_id = find_airtable_record_id(building)
+        #code block below needs tested - one succesful test on 09/24/2025 changing buildin_id=18 year built 1954 to 1964 (pt 2)
+
+        if existing_record_id:
+            response = httpx.patch(
+                f"{AIRTABLE_API_URL}airtable_Building/{existing_record_id}",
+                headers={"Authorization": f"Bearer {AIRTABLE_API_KEY}", "Content-Type": "application/json"},
+                json=building_payload
+            )
+        else:
+            response = httpx.post(
+                f"{AIRTABLE_API_URL}airtable_Building",
+                headers={"Authorization": f"Bearer {AIRTABLE_API_KEY}", "Content-Type": "application/json"},
+                json=building_payload
+            )
+
         print(response.text)
         if response.status_code != 200:
             print(f"Failed to sync building ID {building.building_id}: {response.json()}")
