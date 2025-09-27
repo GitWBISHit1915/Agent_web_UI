@@ -18,14 +18,6 @@ import httpx
 from shutil import get_terminal_size
 COLS = get_terminal_size(fallback=(80,24)).columns
 
-DATABASE_URL = 'mssql+pyodbc://wbis_api:a7#J!q9P%bZt$r2d@JOHN\\SQLEXPRESS01/wbis_core?driver=ODBC+Driver+17+for+SQL+Server'
-
-
-AIRTABLE_BASE_ID="appK6lkMaeCNpBAiY"
-AIRTABLE_API_KEY="patWCppXtHNjVDsFR.5490c1dfa5f1d80e1c8930927cee60b5b16063a50df7d2b30c6ac6394eb09dca"
-AIRTABLE_TABLE_ID="tbllK1Negu5zcxHXN"
-
-AIRTABLE_API_URL="https://api.airtable.com/v0/appK6lkMaeCNpBAiY/"
 
 #insert env
 
