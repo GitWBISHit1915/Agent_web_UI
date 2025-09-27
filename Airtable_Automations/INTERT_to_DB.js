@@ -47,4 +47,19 @@ const res = await fetch(url, {
     body: JSON.stringify({ fields }),
 });
 
-console.log(res.status, await res.text());
+const text = await res.text();
+console.log(res.status, text);
+
+let building_id = null, addr_norm = null
+try {
+    const parsed = JSON.parse(text);
+    building_id = parsed.building_id ?? null;
+    addr_norm = parsed.address_normalized ?? fields.address_normalized ?? null;
+} catch (e) {
+    console.log("Could not parse response", e);
+    addr_norm = fields.address_normalized ?? null;
+}
+
+output.set("building_id", building_id != null ? Number(building_id) : null);
+output.set("address_normalized", addr_norm);
+
