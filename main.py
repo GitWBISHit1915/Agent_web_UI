@@ -409,6 +409,7 @@ def update_building(building_id: int, building: BuildingUpdate, db: Session = De
 
 @app.post("/airtable/buildings/update")
 def update_building_from_airtable(payload: dict = Body(...)):
+        
     """
     Minimal, column-selective UPDATE for dbo.Building.
     Accepts:
@@ -472,7 +473,7 @@ def update_building_from_airtable(payload: dict = Body(...)):
     if not set_cols:
         return {"status": "ok", "updated": 0, "building_id": int(bld_id)}
 
-    sql = "UPDATE dbo.Building SET " + ", ".join(set_cols) + " WHERE building_id = ?"
+    sql = "UPDATE dbo.Building SET " + ", ".join(set_cols) + " WHERE building_id = ? AND is_deleted = 0"
     set_vals.append(int(bld_id))
 
     try:
@@ -498,6 +499,32 @@ def delete_building(building_id: int, db: Session = Depends(get_db)):
     db.delete(db_building)
     db.commit()
     return db_building
+
+@app.post("/airtable/buildings/delete")
+def soft_delete_building(payload: dict = Body(...)):
+    bld_id = payload.get("building_id")
+    if not bld_id:
+        raise HTTPException(400, "building_id is required")
+
+    sql = """
+        UPDATE dbo.Building
+        SET is_deleted = 1,
+            deleted_at = SYSUTCDATETIME()
+        WHERE building_id = ? AND is_deleted = 0
+
+    """
+    try:
+        conn = pyodbc.connect(CONN_STR)
+        cur = conn.cursor()
+        cur.execute(sql, (int(bld_id),))
+        rows = cur.rowcount
+        conn.commit()
+        return {"status": "ok", "deleted": rows, "buildin_id": int(bld_id)}
+    except pyodbc.Error as e:
+        raise HTTPException(500, f"DB error: {e}")
+    finally:
+        try: conn.close()
+        except: pass
 
 @app.post("/entity/", response_model=EntityInDB)
 def create_entity(entity: EntityCreate, db: Session = Depends(get_db)):
