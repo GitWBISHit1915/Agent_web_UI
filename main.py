@@ -1,6 +1,6 @@
 ﻿from dataclasses import MISSING
 from logging import PlaceHolder
-from fastapi import Body, FastAPI, Depends, HTTPException, Header
+from fastapi import Body, FastAPI, Depends, HTTPException, Header, Query
 from sqlalchemy import create_engine, Column, Integer, String, DECIMAL
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.declarative import declarative_base
@@ -16,8 +16,17 @@ from models.clientcontact_model import ClientContact
 from schemas.clientcontact_schema import ClientContactBase, ClientContactCreate, ClientContactInDB, ClientContactUpdate
 import httpx
 from shutil import get_terminal_size
+from datetime import datetime, timezone
 COLS = get_terminal_size(fallback=(80,24)).columns
 
+DATABASE_URL = 'mssql+pyodbc://wbis_api:a7#J!q9P%bZt$r2d@JOHN\\SQLEXPRESS01/wbis_core?driver=ODBC+Driver+17+for+SQL+Server'
+
+
+AIRTABLE_BASE_ID="appK6lkMaeCNpBAiY"
+AIRTABLE_API_KEY="patWCppXtHNjVDsFR.5490c1dfa5f1d80e1c8930927cee60b5b16063a50df7d2b30c6ac6394eb09dca"
+AIRTABLE_TABLE_ID="tbllK1Negu5zcxHXN"
+
+AIRTABLE_API_URL="https://api.airtable.com/v0/appK6lkMaeCNpBAiY/"
 
 #insert env
 
@@ -88,6 +97,16 @@ def find_airtable_record_id(building:Building) -> Optional[str]:
                     record['fields'].get('bld_number') == building.bld_number):
                 return record['id']
     return None
+
+def _parse_since(since: str | None) -> datetime:
+    if not since:
+        return datetime(1970,1,1, tzinfo=timezone.utc)
+    try:
+        if since.endswith("Z"):
+            since = since[:-1] + "+00:00"
+        return datetime.fromisoformat(since)
+    except Exception:
+        raise HTTPException(400, "Invalid 'since' (use iso 8601, e.g. 2025-09-27T23:10:00Z)")
 
 @app.post("/airtable/buildings/ingest")
 def ingest_building(payload: dict = Body(...)): # "C" in Crud (From Aitable Perspective)
@@ -491,6 +510,30 @@ def update_building_from_airtable(payload: dict = Body(...)):
         except Exception:
             pass
 
+@app.post("/airtable/buildings/restore")
+def restore_building(payload: dict = Body(...)):
+    bld_id = payload.get("building_id")
+    if not bld_id:
+        raise HTTPException(400, "building_id is required")
+    sql = """
+    UPDATE dbo.Building
+        SET is_deleted = 0,
+            deleted_at = NULL
+     Where building_id = ? AND is_deleted = 1
+    """
+    try:
+        conn = pyodbc.connect(CONN_STR)
+        cur = conn.cursor()
+        cur.execute(sql, (int(bld_id),))
+        rows = cur.rowcount
+        conn.commit()
+        return {"status":"ok","restored":rows,"building_id":int(bld_id)}
+    except pyodbc.Error as e:
+        raise HTTPException(500, f"DB error: {e}")
+    finally:
+        try: conn.close()
+        except: pass
+
 @app.delete("/buildings/{building_id}", response_model=BuildingInDB)
 def delete_building(building_id: int, db: Session = Depends(get_db)):
     db_building = db.query(Building).filter(Building.building_id == building_id).first()
@@ -525,6 +568,95 @@ def soft_delete_building(payload: dict = Body(...)):
     finally:
         try: conn.close()
         except: pass
+
+@app.get("/airtable/buildings/changes")
+def buildings_changes(since: str = Query(None, description="ISO-8601, e.g. 2025-09-27T23:10:00Z")):
+    since_dt = _parse_since(since)
+    now = datetime.now(timezone.utc)
+
+    sql = """
+    SELECT
+      b.building_id,
+      b.mortgagee_id,
+      b.[Address Normalized],
+      b.[Bld#],
+      b.[Owner Occupied],
+      b.[Street Address],
+      b.[City],
+      b.[State],
+      b.[Zip],
+      b.[County],
+      b.[Units],
+      b.[construction_code],
+      b.[Year Built],
+      b.[Stories],
+      b.[Square Feet],
+      b.[Desired Building Coverage],
+      b.[Fire Alarm],
+      b.[Sprinkler System],
+      b.[roof_year_updated],
+      b.[plumbing_year_updated],
+      b.[electrical_year_updated],
+      b.[hvac_year_updated],
+      b.[entity_id],
+      b.is_deleted,
+      b.updated_at
+    FROM dbo.[Building] b
+    WHERE b.[updated_at] > ? AND b.[updated_at] <= ?
+    ORDER BY b.[updated_at], b.[building_id]
+    """
+
+    rows = []
+    try:
+        conn = pyodbc.connect(CONN_STR)
+        cur = conn.cursor()
+        cur.execute(sql, (since_dt, now))
+        cols = [c[0] for c in cur.description]
+        for r in cur.fetchall():
+            rows.append(dict(zip(cols, r)))
+    finally:
+        try: conn.close()
+        except: pass
+
+    upserts = []
+    deletes = []
+    for r in rows:
+        payload = {
+            "building_id": r["building_id"],
+            "mortgagee_id": r["mortgagee_id"],
+            "Address Normalized": r["Address Normalized"],
+            "Bld#": r["Bld#"],
+            "Owner Occupied": r["Owner Occupied"],
+            "Street Address": r["Street Address"],
+            "City": r["City"],
+            "State": r["State"],
+            "Zip": r["Zip"],
+            "County": r["County"],
+            "Units": r["Units"],
+            "construction_code": r["construction_code"],
+            "Year Built": r["Year Built"],
+            "Stories": r["Stories"],
+            "Square Feet": r["Square Feet"],
+            "Desired Building Coverage": r["Desired Building Coverage"],
+            "Fire Alarm": r["Fire Alarm"],
+            "Sprinkler System": r["Sprinkler System"],
+            "roof_year_updated": r["roof_year_updated"],
+            "plumbing_year_updated": r["plumbing_year_updated"],
+            "electrical_year_updated": r["electrical_year_updated"],
+            "hvac_year_updated": r["hvac_year_updated"],
+            "entity_id": r["entity_id"],
+            "updated_at": r["updated_at"].isoformat()
+        }
+        if r["is_deleted"]:
+            deletes.append({"building_id": r["building_id"], "updated_at": payload["updated_at"]})
+        else:
+            upserts.append(payload)
+
+    return {
+        "now": now.isoformat(),
+        "upserts": upserts,
+        "deletes": deletes
+}
 
 @app.post("/entity/", response_model=EntityInDB)
 def create_entity(entity: EntityCreate, db: Session = Depends(get_db)):
